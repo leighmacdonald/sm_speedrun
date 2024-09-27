@@ -1,0 +1,30 @@
+name: release
+
+on:
+  release:  
+
+jobs:
+  release:
+    name: "release"
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Setup SourcePawn Compiler
+        uses: rumblefrog/setup-sp@master
+        with:
+          version: "1.12.x"
+
+      - name: Ensure plugin builds
+        working-directory: ./scripting
+        run: spcomp -i"./include/" gbans.sp -o ../plugins/gbans.smx
+
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v3
+        with:
+          name: snapshot
+          path: plugins/*
+          retention-days: 1
