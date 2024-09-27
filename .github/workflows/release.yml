@@ -20,7 +20,7 @@ jobs:
 
       - name: Ensure plugin builds
         working-directory: ./scripting
-        run: spcomp -i"./include/" gbans.sp -o ../plugins/gbans.smx
+        run: spcomp -i"./include/" sm_speedrun.sp -o ../plugins/sm_speedrun.smx
 
       - name: Upload snapshot
         uses: actions/upload-artifact@v3
