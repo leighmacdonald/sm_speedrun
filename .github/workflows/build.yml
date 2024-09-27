@@ -5,7 +5,7 @@ on:
 
 jobs:
   formatting:
-    name: Formatting Check
+    name: Formatting
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
         include-regex: '*.sp'
 
   build:
-    name: "build"
+    name: "Build"
     runs-on: "ubuntu-latest"
     steps:
       - uses: actions/checkout@v4
