@@ -4,6 +4,22 @@ on:
   push: 
 
 jobs:
+  formatting:
+    name: Formatting Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        # repository: ${{ github.event.pull_request.head.repo.full_name }}
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+    - name: Run clang-format style check for C/C++/Protobuf programs.
+      uses: jidicula/clang-format-action@v4.13.0
+      with:
+        clang-format-version: '18'
+        check-path: 'scripting'
+        include-regex: '*.sp'
+
   build:
     name: "build"
     runs-on: "ubuntu-latest"
