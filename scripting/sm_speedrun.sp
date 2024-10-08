@@ -7,6 +7,8 @@
 #include <tf2>
 #include <tf2_stocks>
 #include <sdktools>
+#include <datapack>
+#include <morecolors>
 
 #define ID_LEN			18
 #define MAXROUNDS		10
@@ -23,12 +25,10 @@ Plugin myinfo = {
 	url			= "https://github.com/leighmacdonald/sm_speedrun",
 };
 
-int g_startTime = -1;
-
 enum struct PlayerInfo {
-	int	 time_start;
-	int	 time_end;
-	char steam_id[ID_LEN];
+	float time_start;
+	float time_end;
+	char  steam_id[ID_LEN];
 }
 
 PlayerInfo	  g_playerInfo[MAXPLAYERS];
@@ -37,19 +37,13 @@ int			  g_playerInfo_disconnected_idx;
 PlayerInfo	  g_playerInfo_disconnected[MAXDISCONNECTED];
 
 GlobalForward gf_RoundEndEvent;
+
 ConVar		  sr_reset_empty;
 
-float g_roundTime;
-
-int g_setupCompleted = false;
-
-// L 09/29/2024 - 20:29:25: "ุ<3><[U:1:123868297]><Blue>" changed role to "soldier"
-// L 09/29/2024 - 20:29:31: World triggered "Round_Start"
-// L 09/29/2024 - 20:29:31: World triggered "Round_Setup_Begin"
-// L 09/29/2024 - 20:29:31: World triggered "Mini_Round_Selected" (round "eotl_round_1")
-// L 09/29/2024 - 20:29:31: World triggered "Mini_Round_Start"
-// L 09/29/2024 - 20:29:44: World triggered "Round_Setup_End"
-// miniround_win
+float		  g_startTime = 0.0;
+float		  g_roundTime;
+int			  g_speedrunRound = 0;
+bool		  g_isWin		  = false;
 
 public
 void OnPluginStart() {
@@ -59,16 +53,10 @@ void OnPluginStart() {
 
 	sr_reset_empty = AutoExecConfig_CreateConVar("sr_reset_empty", "1", "Auto restart map when no human players remain on the server", FCVAR_NONE, true, 0.0, true, 1.0);
 
-	// Mini_Round_Start?
-	HookEvent("teamplay_setup_finished", OnTeamplaySetupFinished);
 	HookEvent("teamplay_win_panel", OnRoundWinPanel);
-	// HookEvent("round_start", OnRoundStart);
-	HookEvent("teamplay_point_captured", OnPointCapture);
 	HookEvent("teamplay_round_win", OnRoundWin);
-	//HookEvent("teamplay_round_start", OnRoundStart);
 	HookEvent("teamplay_game_over", onTeamplayGameOver);
-	HookEvent("tf_game_over", OnGameOver);
-	// HookEvent("teamplay_round_active");
+	HookEvent("tf_game_over", onTeamplayGameOver);
 }
 
 public
@@ -79,93 +67,102 @@ APLRes AskPluginLoad2(Handle plugin, bool late, char[] error, int err_max) {
 }
 
 public
-void OnMapEnd() {
-	debug("[EVENT] Map End");
+void OnMapStart() {
+	g_speedrunRound = 0;
 }
 
 public
 void onTeamplayGameOver(Handle event, const char[] name, bool dontBroadcast) {
-	debug("[EVENT] %s", name);
+	if (!g_isWin) {
+		return;
+	}
+
+	float now = GetGameTime();
+
+	for (int i = 1; i <= MaxClients; i++) {
+		if (!isValidClient(i)) {
+			continue;
+		}
+		if (g_playerInfo[i].time_start > 0) {
+			g_playerInfo[i].time_end = now;
+		}
+	}
+
 	char reason[12];
 	GetEventString(event, "reason", reason, sizeof reason);
+	debug("[EVENT] %s (%s)", name, reason);
 	if (strcmp(reason, "winlimit") == 0) {
 		debug("Templay Game end event ( WINLIMIT )");
+
 		return;
 	}
 
-	debug("Templay Game end event");
+	sendTimes();
 }
 
 public
-void OnGameOver(Handle event, const char[] name, bool dontBroadcast) {
-	debug("[EVENT] %s", name);
-
-	char reason[12];
-	GetEventString(event, "reason", reason, sizeof reason);
-	if (strcmp(reason, "winlimit") == 0) {
-		debug("Game end event ( WINLIMIT )");
-		return;
-	}
+void TF2_OnWaitingForPlayersEnd() {
+	reset();
+	startSpeedrun();
 }
 
-public
-void OnTeamplaySetupFinished(Handle event, const char[] name, bool dontBroadcast) {
-	if (GetEventBool(event, "full_round", false) || g_setupCompleted == 0) {
-		debug("Resetting round data due to full restart");
-		restart();
-	}
+void startSpeedrun() {
+	g_speedrunRound++;
 
-	g_setupCompleted++;
-
-	debug("Speedrun Round #%d", g_setupCompleted);
-
-	if ((g_setupCompleted - 1) > 0) {
+	if (g_speedrunRound > 1) {
 		return;
 	}
 
-	int now		= GetTime();
-	g_startTime = now;
-
-	for (int i = 0; i < MaxClients; i++) {
-		if (!isValidClient(i)){
+	g_startTime = GetGameTime();
+	for (int i = 1; i <= MaxClients; i++) {
+		if (!isValidClient(i) || !IsClientConnected(i)) {
 			continue;
 		}
 
 		char sid[ID_LEN];
-		GetClientAuthId(GetClientOfUserId(i), AuthId_SteamID64, sid, sizeof sid);
-		g_playerInfo[i].steam_id = sid;
-		g_playerInfo[i].time_start = now;
-		g_playerInfo[i].time_end   = -1;
+		GetClientAuthId(i, AuthId_SteamID64, sid, sizeof sid, true);
+		g_playerInfo[i].steam_id   = sid;
+		g_playerInfo[i].time_start = g_startTime;
+		g_playerInfo[i].time_end   = 0.0;
+
+		debug("Init: %s id: %d start: %d", sid, i, g_startTime);
 	}
+
+	printSuccess("Run Started");
 }
 
-void restart() {
-	int now = GetTime();
+void reset() {
+	float now = GetGameTime();
 
-	for (int i = 0; i < sizeof g_playerInfo; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 		g_playerInfo[i].time_start = now;
-		g_playerInfo[i].time_end   = -1;
+		g_playerInfo[i].time_end   = 0.0;
 	}
 
 	for (int i = 0; i < sizeof g_playerInfo_disconnected; i++) {
 		g_playerInfo_disconnected[i].steam_id	= "";
-		g_playerInfo_disconnected[i].time_start = -1;
-		g_playerInfo_disconnected[i].time_end	= -1;
+		g_playerInfo_disconnected[i].time_start = 0.0;
+		g_playerInfo_disconnected[i].time_end	= 0.0;
 	}
 
-	g_setupCompleted = 0;
+	g_speedrunRound = 0;
+	g_isWin			= false;
 }
 
 public
-void OnClientDisconnect_Post(int clientID) {
+void OnClientDisconnect(int clientID) {
+	if (!isValidClient(clientID)) {
+		return;
+	}
+
 	// Copy the players participation info over;
 	g_playerInfo_disconnected[g_playerInfo_disconnected_idx].steam_id	= g_playerInfo[clientID].steam_id;
 	g_playerInfo_disconnected[g_playerInfo_disconnected_idx].time_start = g_playerInfo[clientID].time_start;
-	g_playerInfo_disconnected[g_playerInfo_disconnected_idx].time_end	= GetTime();
+	g_playerInfo_disconnected[g_playerInfo_disconnected_idx].time_end	= GetGameTime();
 
 	g_playerInfo[clientID].steam_id										= "";
-	g_playerInfo[clientID].time_start									= -1;
-	g_playerInfo[clientID].time_end										= -1;
+	g_playerInfo[clientID].time_start									= 0.0;
+	g_playerInfo[clientID].time_end										= 0.0;
 
 	g_playerInfo_disconnected_idx++;
 	if (g_playerInfo_disconnected_idx > MAXDISCONNECTED) {
@@ -177,84 +174,50 @@ void OnClientDisconnect_Post(int clientID) {
 
 		return;
 	}
+
+	CreateTimer(10.0, mapRestarter, _, TIMER_DATA_HNDL_CLOSE);
+}
+
+Action mapRestarter(Handle timer) {
+	if (getRealClientCount() > 0) {
+		return Plugin_Stop;
+	}
+
+	debug("Restarting map due to lack of players");
+
+	reloadMap();
+
+	return Plugin_Stop;
 }
 
 // https://wiki.alliedmods.net/Team_Fortress_2_Events#teamplay_win_panel
 public
 void OnRoundWinPanel(Handle event, const char[] name, bool dontBroadcast) {
 	debug("[EVENT] %s", name);
-	TFTeam team			= view_as<TFTeam>(GetEventInt(event, "winning_team"));
-	int	   winrreason	= GetEventInt(event, "winrreason");
-	int	   flagcaplimit = GetEventInt(event, "flagcaplimit");
-	bool   round_complete	= GetEventBool(event, "round_complete");
-
+	TFTeam team			  = view_as<TFTeam>(GetEventInt(event, "winning_team"));
+	int	   winrreason	  = GetEventInt(event, "winrreason");
+	int	   flagcaplimit	  = GetEventInt(event, "flagcaplimit");
+	bool   round_complete = GetEventBool(event, "round_complete");
 
 	debug("team: %d winrreason: %d flagcaplimit: %d round_complete: %d",
 		  team, winrreason, flagcaplimit, round_complete);
-	
+
 	if (!round_complete) {
 		return;
 	}
 
-	if (team != TFTeam_Blue) {
+	if (team != TFTeam_Blue) /*They got to us???*/ {
 		return;
 	}
 
-	int now = GetTime();
-
-	for (int i = 0; i < sizeof g_playerInfo; i++) {
-		if (!isValidClient(i)) {
-			continue;
-		}
-		if (g_playerInfo[i].time_start > 0) {
-			g_playerInfo[i].time_end = now;
-		}
-	}
-
-	sendTimes();
-
+	g_isWin = true;
 }
-
 
 // https://wiki.alliedmods.net/Team_Fortress_2_Events#teamplay_round_win
 public
 void OnRoundWin(Handle event, const char[] name, bool dontBroadcast) {
-	debug("[EVENT] %s", name);
-	g_roundTime	= GetEventFloat(event, "round_time");
+	g_roundTime = GetEventFloat(event, "round_time");
 	debug("Set round time: %f", g_roundTime);
-}
-
-public
-void OnPointCapture(Handle event, const char[] name, bool dontBroadcast) {
-	debug("[EVENT] %s", name);
-	int	 cp = GetEventInt(event, "cp");
-	char cpName[128];
-	GetEventString(event, "cpname", cpName, sizeof cpName);
-	TFTeam team = view_as<TFTeam>(GetEventInt(event, "team"));
-
-	char   cappers[32];
-	GetEventString(event, "cappers", cappers, MAXPLAYERS);
-
-	char message[200];
-	int	 client_index;
-	int	 cappers_count	= strlen(cappers);
-	int[] cappers_array = new int[cappers_count];
-
-	for (int i = 0; i < cappers_count; i++) {
-		client_index = view_as<int>(cappers[i]);
-
-		Format(message, sizeof(message), "%s, %N", message, client_index);
-		cappers_array[i] = client_index;
-
-		char s64[18];
-		if (!GetClientAuthId(client_index, AuthId_SteamID64, s64, sizeof s64, true)) {
-			continue;
-		}
-
-		debug("%N: %s", client_index, s64);
-	}
-
-	debug("point: %d cpname: %s team: %d cappers: %s", cp, cpName, team, cappers);
 }
 
 public
@@ -279,8 +242,8 @@ void OnClientAuthorized(int clientID) {
 	}
 
 	g_playerInfo[clientID].steam_id	  = steam_id;
-	g_playerInfo[clientID].time_start = g_setupCompleted ? GetTime() : -1;
-	g_playerInfo[clientID].time_end = -1;
+	g_playerInfo[clientID].time_start = g_speedrunRound > 0 ? GetGameTime() : 0.0;
+	g_playerInfo[clientID].time_end	  = 0.0;
 
 	debug("Player initialized: %s | %d", steam_id, g_playerInfo[clientID].time_start);
 }
@@ -292,8 +255,10 @@ void sendTimes() {
 		return;
 	}
 
-	int	 duration = GetTime() - g_startTime;
-	char mapName[128];
+	printSuccess("Run Ended");
+
+	float duration = GetGameTime() - g_startTime;
+	char  mapName[128];
 	GetCurrentMap(mapName, sizeof mapName);
 
 	int		   realPlayerCount = getRealClientCount();
@@ -301,10 +266,11 @@ void sendTimes() {
 	PlayerInfo players[256];
 	int		   total = 0;
 
-	for (int i = 0; i < sizeof g_playerInfo; i++) {
+	for (int i = 1; i <= MaxClients; i++) {
 		if (!isValidClient(i)) {
 			continue;
 		}
+
 		if (g_playerInfo[i].time_start <= 0 || strcmp(g_playerInfo[i].steam_id, "") == 0) {
 			continue;
 		}
@@ -321,9 +287,9 @@ void sendTimes() {
 			continue;
 		}
 
-		players[total].steam_id	  = g_playerInfo[i].steam_id;
-		players[total].time_start = g_playerInfo[i].time_start;
-		players[total].time_end	  = g_playerInfo[i].time_end;
+		players[total].steam_id	  = g_playerInfo_disconnected[i].steam_id;
+		players[total].time_start = g_playerInfo_disconnected[i].time_start;
+		players[total].time_end	  = g_playerInfo_disconnected[i].time_end;
 
 		total++;
 	}
@@ -342,12 +308,14 @@ void sendTimes() {
 
 	for (int i = 0; i < total; i++) {
 		pack.WriteString(players[i].steam_id);
-		pack.WriteCell(players[i].time_start);
-		pack.WriteCell(players[i].time_end);
+		pack.WriteCell(RoundToFloor(players[i].time_start / 60));
+		pack.WriteCell(RoundToFloor(players[i].time_end / 60));
 		pack.WriteCell(getScore(i));
 
 		debug("sid: %s score: %d duration: %d", players[i].steam_id, getScore(i), players[i].time_end - players[i].time_start);
 	}
+
+	pack.Reset();
 
 	Call_StartForward(gf_RoundEndEvent);
 	Call_PushCell(pack);
@@ -364,23 +332,16 @@ stock int getRealClientCount() {
 
 	return iClients;
 }
-
-// Get player's score
-stock int getScore(int client)
-{	
+stock int getScore(int client) {
 	int entity = GetPlayerResourceEntity();
-	int value = GetEntProp(entity, Prop_Send, "m_iTotalScore", _, client);
+	int value  = GetEntProp(entity, Prop_Send, "m_iTotalScore", _, client);
 	return value;
-
-	//entity = new GetPlayerResourceEntity();
-	// return GetEntProp(client, Prop_Send, "m_iTotalScore", _, client);
-	// return TF2_GetPlayerResourceData(client, TFResource_TotalScore);
 }
 
 stock int getBotClientCount() {
 	int iClients = 0;
 	for (int i = 1; i <= MaxClients; i++) {
-		if (IsClientInGame(i) && !IsFakeClient(i)) {
+		if (isValidBot(i)) {
 			iClients++;
 		}
 	}
@@ -392,6 +353,10 @@ stock bool isValidClient(int client) {
 	return !(1 <= client <= MaxClients) || !IsClientInGame(client) || IsFakeClient(client) || IsClientSourceTV(client) || IsClientReplay(client);
 }
 
+stock bool isValidBot(int client) {
+	return !(1 <= client <= MaxClients) || !IsClientInGame(client) || !IsFakeClient(client) || IsClientSourceTV(client) || IsClientReplay(client);
+}
+
 stock void debug(const char[] format, any...) {
 #if defined _DEBUG
 	char buffer[254];
@@ -400,3 +365,18 @@ stock void debug(const char[] format, any...) {
 	PrintToChatAll("[Speedrun] %s", buffer);
 #endif
 }
+
+stock void printSuccess(const char[] format, any...) {
+	char buffer[254];
+	VFormat(buffer, sizeof buffer, format, 2);
+	MC_PrintToChatAll("{green}%s{default}", buffer);
+}
+
+stock void gbLog(const char[] format, any...)
+{
+	char buffer[254];
+	VFormat(buffer, sizeof buffer, format, 2);
+	PrintToServer("[GB] %s", buffer);
+}
+
+publ
